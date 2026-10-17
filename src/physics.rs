@@ -487,8 +487,14 @@ impl Physics {
                 let landing_x = root.x + placement;
                 let x = anchor.x + (landing_x - anchor.x) * smooth;
                 let floor = self.floor_height(x, z);
-                let y =
-                    floor + SHOE_CENTER_ABOVE_FLOOR + (std::f32::consts::PI * swing).sin() * 0.13;
+                // Mid-swing: marsz unosi stopę tuż nad ziemię, bieg kapuje
+                // pięta ku pośladkowi (zgięcie kolana do ~125° w połowie
+                // wahadła — Physiopedia "Running Biomechanics").
+                let swing_lift =
+                    0.075 + 0.265 * smoothstep01((self.smoothed_speed_kmh - 6.0) / 4.0);
+                let y = floor
+                    + SHOE_CENTER_ABOVE_FLOOR
+                    + (std::f32::consts::PI * swing).sin() * swing_lift;
                 self.foot_positions[leg] = Vector::new(x, y, z);
             }
         }
