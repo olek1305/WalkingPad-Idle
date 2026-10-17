@@ -327,6 +327,26 @@ impl Bld {
     /// Kapsuła jest cylindrem z półkulistymi końcami. Półkule są osobnymi
     /// siatkami, ale mają wspólny materiał i gładkie normalne radialne.
     pub(crate) fn capsule(&mut self, a: Vec3, b: Vec3, radius: f32, color: Color) {
+        self.capsule_ex(a, b, radius, 8, 5, 8, color);
+    }
+
+    /// Gładka kapsuła dla sylwetki biegacza: 16 ścianek + głębsze czapki.
+    /// Standard `capsule` (8 ścianek) wygląda jak pryzma na bliskim planie,
+    /// ale zostaje tani dla reszty świata.
+    pub(crate) fn capsule_smooth(&mut self, a: Vec3, b: Vec3, radius: f32, color: Color) {
+        self.capsule_ex(a, b, radius, 16, 8, 16, color);
+    }
+
+    fn capsule_ex(
+        &mut self,
+        a: Vec3,
+        b: Vec3,
+        radius: f32,
+        segments: usize,
+        cap_rings: usize,
+        cap_slices: usize,
+        color: Color,
+    ) {
         let axis = b - a;
         let length = axis.length();
         if length < 1e-4 || radius <= 0.0 {
@@ -336,10 +356,9 @@ impl Bld {
         let reference = if n.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
         let u = unit(n.cross(reference));
         let v = unit(n.cross(u));
-        const SEGMENTS: usize = 8;
-        for k in 0..SEGMENTS {
-            let t0 = k as f32 / SEGMENTS as f32 * TAU;
-            let t1 = (k + 1) as f32 / SEGMENTS as f32 * TAU;
+        for k in 0..segments {
+            let t0 = k as f32 / segments as f32 * TAU;
+            let t1 = (k + 1) as f32 / segments as f32 * TAU;
             let r0 = u * t0.cos() * radius + v * t0.sin() * radius;
             let r1 = u * t1.cos() * radius + v * t1.sin() * radius;
             self.quad_with_normals(
@@ -351,8 +370,8 @@ impl Bld {
                 color,
             );
         }
-        self.sphere(a, radius, 5, SEGMENTS, color);
-        self.sphere(b, radius, 5, SEGMENTS, color);
+        self.sphere(a, radius, cap_rings, cap_slices, color);
+        self.sphere(b, radius, cap_rings, cap_slices, color);
     }
 
     pub(crate) fn limb(&mut self, a: Vec3, b: Vec3, radius: f32, color: Color) {

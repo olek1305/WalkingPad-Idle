@@ -51,7 +51,10 @@ const WINDOW_HALF_HEIGHT: f32 = 0.5;
 const WINDOW_LOWER_ROW_Y: f32 = 1.1;
 const WINDOW_ROW_STEP_DIVISOR: f32 = 2.4;
 const WINDOW_MIN_ROW_STEP: f32 = 1.6;
-const WINDOW_PROJECTION: f32 = 0.05;
+// Szyba 12 cm przed murem: 5 cm osunęło się w z-fight na dystansie 100+ m
+// (moaré-kreski/przesunęte schody w oknach). 12 cm dobrze dzieli się głębią
+// jeszcze przy 200 m i z zewnątrz czyta jako wystająca ramka okienna.
+const WINDOW_PROJECTION: f32 = 0.12;
 const CITY_BOARD_HEIGHT: f32 = 0.08;
 const CITY_BOARD_WALL_OFFSET: f32 = 0.24;
 

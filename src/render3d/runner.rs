@@ -9,11 +9,9 @@ use super::PI;
 use super::geometry::Bld;
 use super::material::{MaterialSpec, SurfaceKind, surface_preset};
 
-const TORSO_RADIUS: f32 = 0.24;
 const ARM_SHOULDER_LATERAL: f32 = 0.29;
 const ARM_ELBOW_LATERAL: f32 = 0.41;
 const ARM_HAND_LATERAL: f32 = 0.44;
-const ARM_UPPER_RADIUS: f32 = 0.115 * 0.5;
 const ARM_FOREARM_RADIUS: f32 = 0.09 * 0.5;
 const ARM_HAND_RADIUS: f32 = 0.105;
 const ARM_UPPER_BONE_LENGTH: f32 = 0.35;
@@ -57,10 +55,11 @@ fn smoothstep01(value: f32) -> f32 {
     value * value * (3.0 - 2.0 * value)
 }
 
-fn torso_pose(root: Vec3, speed: f32) -> (Vec3, Vec3, Vec3) {
-    let lean = (visual_speed(speed) / 10.0).min(1.0) * 0.22;
+fn torso_pose(root: Vec3, _speed: f32) -> (Vec3, Vec3, Vec3) {
+    // Bez pochylenia: przy szym Simmons wysokościach 0.22 robiło złamany tors
+    // (fizyka nóg zostaje pionowa) — biegacz stoi prosto.
     let torso_hip = root + Vec3::new(0.0, -0.02, 0.0);
-    let shoulder = root + Vec3::new(0.10 + lean, 0.55, 0.0);
+    let shoulder = root + Vec3::new(0.10, 0.55, 0.0);
     (
         torso_hip + Vec3::new(0.0, 0.04, 0.0),
         shoulder,
@@ -122,7 +121,7 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
     // Physics owns the visual bob and solves the knees against this exact
     // root. Keeping one posed snapshot also keeps the shadow triangles exact.
     let root = Vec3::from_array(pose.root);
-    let (torso_hip, shoulder, torso_top) = torso_pose(root, speed);
+    let (_, shoulder, torso_top) = torso_pose(root, speed);
 
     let cloth = MaterialSpec::from_surface(surface_preset(SurfaceKind::Cloth, 0.0));
     let skin = MaterialSpec::from_surface(surface_preset(SurfaceKind::Skin, 0.0));
@@ -135,6 +134,11 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
     let shoe_color = Color::new(0.93, 0.73, 0.14, 1.0);
     let skin_color = Color::new(0.82, 0.50, 0.32, 1.0);
 
+    // Szorty odchylone od spodni + odblaskowy pas: detale czytelne z tyłu,
+    // skąd kamera patrzy na biegacza.
+    let shorts = Color::new(0.06, 0.15, 0.38, 1.0);
+    let reflect = Color::new(0.62, 0.96, 0.42, 1.0);
+
     builder.with_material(cloth, |builder| {
         for i in 0..2 {
             // Rapier solves each knee from this side-specific hip. Reusing
@@ -143,17 +147,55 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
             let hip = leg_hip(root, i);
             let foot = Vec3::from_array(pose.feet[i]);
             let knee = Vec3::from_array(pose.knees[i]);
-            builder.limb(hip, knee, 0.17, trousers);
-            builder.limb(knee, foot, 0.145, trousers);
+            // szorty kończą się w połowie uda
+            builder.capsule_smooth(hip, hip + (knee - hip) * 0.5, 0.128, shorts);
+            builder.capsule_smooth(hip, knee, 0.105, trousers);
+            builder.capsule_smooth(knee, foot, 0.082, trousers);
             builder.with_material(shoe, |builder| {
+                let shoe_center = foot + Vec3::new(0.08, 0.0, -0.015);
+                builder.cube(shoe_center, Vec3::from_array(SHOE_SIZE), shoe_color);
+                // biała podeszwa lekko wystająca poza bryłę buta
                 builder.cube(
-                    foot + Vec3::new(0.08, 0.0, -0.015),
-                    Vec3::from_array(SHOE_SIZE),
-                    shoe_color,
+                    Vec3::new(
+                        shoe_center.x + 0.005,
+                        shoe_center.y - SHOE_SIZE[1] * 0.30,
+                        shoe_center.z,
+                    ),
+                    Vec3::new(
+                        SHOE_SIZE[0] + 0.012,
+                        SHOE_SIZE[1] * 0.44,
+                        SHOE_SIZE[2] + 0.008,
+                    ),
+                    Color::new(0.93, 0.93, 0.89, 1.0),
                 );
             });
         }
-        builder.capsule(torso_hip, torso_top, TORSO_RADIUS, jacket);
+        // Tułów zamiast jednej golawej kapsuły: miednica (szorty) → talia →
+        // klatka + nawinięte barki. Radii ≤ 0.24 w strefie ramion, więc
+        // asercje przyczepu rąk pozostają nadzorem.
+        builder.sphere(root + Vec3::new(0.0, 0.06, 0.0), 0.245, 9, 18, shorts);
+        builder.capsule_smooth(
+            root + Vec3::new(0.0, 0.15, 0.0),
+            root + Vec3::new(0.04, 0.36, 0.0),
+            0.212,
+            jacket,
+        );
+        builder.capsule_smooth(root + Vec3::new(0.04, 0.36, 0.0), torso_top, 0.248, jacket);
+        // odblaskowy pasek przecina oba boki korpusu (+/- z)
+        builder.cube(
+            root + Vec3::new(0.09, 0.40, 0.0),
+            Vec3::new(0.15, 0.065, 0.56),
+            reflect,
+        );
+        for side in [-1.0_f32, 1.0] {
+            builder.sphere(
+                shoulder + Vec3::new(0.0, -0.02, side * 0.215),
+                0.145,
+                8,
+                14,
+                jacket,
+            );
+        }
     });
 
     // Ręce mają ubrany odcinek ramienny, a osobne dłonie zawsze używają skóry.
@@ -162,22 +204,23 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
         let side = if i == 0 { 1.0 } else { -1.0 };
         let arm = arm_pose(shoulder, gait, side, speed);
         builder.with_material(cloth, |builder| {
-            builder.limb(arm.upper, arm.elbow, ARM_UPPER_RADIUS * 2.0, jacket);
+            // rękaw lekko opuffany: 6.2 cm zamiast 5.75
+            builder.capsule_smooth(arm.upper, arm.elbow, 0.062, jacket);
         });
         builder.with_material(skin, |builder| {
-            builder.limb(arm.elbow, arm.hand, ARM_FOREARM_RADIUS * 2.0, skin_color);
-            builder.sphere(arm.hand, ARM_HAND_RADIUS, 5, 8, skin_color);
+            builder.capsule_smooth(arm.elbow, arm.hand, ARM_FOREARM_RADIUS, skin_color);
+            builder.sphere(arm.hand, ARM_HAND_RADIUS, 7, 12, skin_color);
         });
     }
 
     builder.with_material(skin, |builder| {
         let neck = shoulder + Vec3::new(0.0, 0.04, 0.0);
-        builder.capsule(neck, neck + Vec3::new(0.03, 0.10, 0.0), 0.10, skin_color);
+        builder.capsule_smooth(neck, neck + Vec3::new(0.03, 0.10, 0.0), 0.10, skin_color);
         builder.sphere(
             shoulder + Vec3::new(0.04, 0.24, 0.0),
             0.19,
-            7,
             10,
+            16,
             skin_color,
         );
     });
@@ -187,8 +230,8 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
         builder.sphere(
             head + Vec3::new(0.0, 0.19, 0.0),
             0.205,
-            6,
-            10,
+            8,
+            14,
             Color::new(0.08, 0.10, 0.18, 1.0),
         );
         builder.cube(
@@ -203,6 +246,12 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
 mod tests {
     use super::*;
     use crate::physics::{GROUND_Y, SHOE_CENTER_ABOVE_FLOOR};
+
+    // Alias testowy 1:1 z poprzednim layoutem tułowia; radii biegacza są
+    // dziś ułożone pod tors budowany z miednicy/waist/chest, ale czytelność
+    // asercji pozostaje przy tej samej wartości bazowej.
+    const TORSO_RADIUS: f32 = 0.24;
+    const ARM_UPPER_RADIUS: f32 = 0.057_5;
 
     #[test]
     fn shoe_bottom_uses_the_physics_foot_center() {
