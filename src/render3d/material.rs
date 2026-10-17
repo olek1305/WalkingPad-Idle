@@ -751,6 +751,11 @@ vec3 linear_to_srgb(vec3 c) {
     return mix(low, high, step(vec3(0.0031308), c));
 }
 
+// Rozpuszczanie cienia przy granicy mapy kierunkowej (ułamek wymiaru UV).
+// 0.18 boxa 128-224 m = 23-40 m strefy przejścia: ogon nocnego cienia znika
+// płynnie nad trawą zamiast kąsać brzytwą na granicy pokrycia.
+const float SUN_BORDER_MELT_UV = 0.18;
+
 float range_attenuation(float distance_to_light, float range) {
     if (range <= 0.0 || distance_to_light >= range) {
         return 0.0;
@@ -836,6 +841,18 @@ float pcf_sun_shadow(vec3 world_pos, vec3 n, vec3 light_dir) {
         projected.z >= 1.0) {
         return 1.0;
     }
+    // Border melt: mapa kierunkowa pokrywa skończony box wokół biegacza.
+    // Nocne cienie (elewacja 10-28°) biegną 30-60 m i dochodziły do granicy
+    // boxa jako twarda brzytwa: ciemność kończyła się w połowie drogi, a
+    // obok (poza boxem) ta sama powierzchnia była już rozświetlona. Im
+    // bliższy granicy, tym mocniej podnosimy widoczność ku 1.0 —
+    // dokładnie tej wartości, którą zwraca obszar poza mapą — więc próg
+    // znika całkowicie, a ogon cienia rozpuszcza się nad trawą zamiast się
+    // odcinać.
+    vec2 border_gap = min(projected.xy, vec2(1.0) - projected.xy);
+    float border_dist = min(border_gap.x, border_gap.y);
+    float melt = clamp(border_dist / SUN_BORDER_MELT_UV, 0.0, 1.0);
+    melt = melt * melt * (3.0 - 2.0 * melt);
     float ndl = max(dot(normalize(n), normalize(light_dir)), 0.0);
     highp float bias = u_shadow_bias.x + u_shadow_bias.y * (1.0 - ndl);
     highp vec2 gradient = receiver_plane_gradient(
@@ -859,7 +876,7 @@ float pcf_sun_shadow(vec3 world_pos, vec3 n, vec3 light_dir) {
             }
         }
     }
-    return visible / 9.0;
+    return mix(1.0, visible / 9.0, melt);
 }
 
 float pcf_lamp0_shadow(vec3 world_pos, vec3 n, vec3 light_dir) {

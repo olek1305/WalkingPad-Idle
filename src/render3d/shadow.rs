@@ -20,8 +20,11 @@ use super::world::WorldCache;
 pub(crate) const DIRECTIONAL_MAP_SIZE: u32 = 4096;
 pub(crate) const LOCAL_MAP_SIZE: u32 = 1024;
 
-const DIRECTIONAL_HALF_EXTENT_MIN: f32 = 48.0;
-const DIRECTIONAL_HALF_EXTENT_MAX: f32 = 64.0;
+const DIRECTIONAL_HALF_EXTENT_MIN: f32 = 64.0;
+// 112: nocne elewacje (10-28°) rzucają cienie drogowych słupów na 35-60 m.
+// Box 48-64 obcinał je na wyrazistej prostej (brzeg mapy), większy box +
+// rozpuszczanie w shaderze (SUN_BORDER_MELT_UV) usuwa ostry styk.
+const DIRECTIONAL_HALF_EXTENT_MAX: f32 = 112.0;
 /// Fokus przy biegaczu zamiast 30 m przed nim: ciaśniejsza projekcja = więcej
 /// texeli na metr = ostrzejsze cienie przy tym samym rozmiarze mapy.
 const DIRECTIONAL_FOCUS_LOCAL_X: f32 = 16.0;
@@ -266,11 +269,11 @@ fn mesh_has_shadow_caster(mesh: &Mesh) -> bool {
         .any(|vertex| (vertex.normal.w as u8) & MaterialFlags::NO_SHADOW.bits() == 0)
 }
 
-/// Smoothly widens the directional coverage when the sun is low, but keeps a
-/// hard upper bound. Without this clamp a shallow sun would demand a huge
-/// projection and make the selected map's texels too coarse near the runner.
+/// Smoothly widens the directional coverage when the light source rides low,
+/// but keeps a hard upper bound. Without this clamp a shallow sun would make
+/// the selected map's texels too coarse near the runner.
 ///
-/// The result is quantized to 4 m steps: `dobа` advances every frame, so a
+/// The result is quantized to 4 m steps: `doba` advances every frame, so a
 /// continuous half-extent would rescale the anchor snapping grid constantly
 /// and the shadow edges would swim. Steps keep the grid stable between rare
 /// transitions.
@@ -463,6 +466,20 @@ pub(crate) fn nearest_texel_center(uv: Vec2, texel: Vec2) -> Vec2 {
     ((uv / texel).floor() + Vec2::splat(0.5)) * texel
 }
 
+/// CPU mirror of the GLSL `SUN_BORDER_MELT_UV`: 1.0 keeps the shadow fully
+/// opaque, 0.0 hands the sample back as fully lit — the shader multiplies
+/// `mix(1.0, vis, melt)`, so long night shadows dissolve instead of ending
+/// as a razor line on the directional map's coverage border.
+#[cfg(test)]
+pub(crate) const SUN_BORDER_MELT_UV: f32 = 0.18;
+
+#[cfg(test)]
+pub(crate) fn shadow_border_melt(uv: Vec2) -> f32 {
+    let border_gap = uv.min(Vec2::splat(1.0) - uv);
+    let t = (border_gap.min_element() / SUN_BORDER_MELT_UV).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 #[cfg(test)]
 pub(crate) fn receiver_depth_at_texel(
     matrix: Mat4,
@@ -485,6 +502,49 @@ fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shadow_border_melt_mirrors_the_fragment_shader_constant_and_curve() {
+        let needle = format!("SUN_BORDER_MELT_UV = {:.2};", SUN_BORDER_MELT_UV);
+        assert!(
+            material::MATERIAL_FRAGMENT_SHADER.contains(&needle),
+            "fragment shader must carry the same melt band: {needle}"
+        );
+        assert!(
+            material::MATERIAL_FRAGMENT_SHADER.contains("mix(1.0, visible / 9.0, melt)"),
+            "fragment shader must blend the sun shadow toward light at the map border"
+        );
+
+        // The center of the map keeps the shadow at full depth.
+        assert!(
+            (shadow_border_melt(Vec2::splat(0.5)) - 1.0).abs() < 1.0e-6,
+            "map center must keep shadows fully opaque"
+        );
+        // The melt band occupies only the outermost 18%: sampling just inside
+        // the band's inner edge is still fully opaque.
+        assert!(
+            (shadow_border_melt(Vec2::new(SUN_BORDER_MELT_UV, 0.5)) - 1.0).abs() < 1.0e-3,
+            "samples at the melt band inner edge must stay opaque"
+        );
+        // Exactly on the border the shadow yields to full light — the same
+        // value the out-of-map path returns, so no razor seam can remain.
+        assert!(
+            shadow_border_melt(Vec2::splat(0.0)).abs() < 1.0e-6,
+            "map border must return fully lit"
+        );
+        for uv in [
+            Vec2::new(0.5, 0.0),
+            Vec2::new(1.0, 0.5),
+            Vec2::new(0.05, 0.05),
+            Vec2::new(0.091, 0.091),
+        ] {
+            let melt = shadow_border_melt(uv);
+            assert!(
+                (0.0..=1.0).contains(&melt),
+                "melt {melt} out of range at {uv:?}"
+            );
+        }
+    }
 
     #[test]
     fn directional_center_snaps_to_absolute_texels() {
