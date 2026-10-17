@@ -29,6 +29,7 @@ const ARM_UPPER_RUN_SWING: f32 = 0.40;
 const ARM_STAND_ELBOW_FLEXION: f32 = 0.26;
 const ARM_WALK_ELBOW_DELTA: f32 = 0.20;
 const ARM_RUN_ELBOW_DELTA: f32 = 0.99; // razem w biegu: ~1.45 rad (~83°)
+const ARM_FOREARM_INWARD: f32 = 0.115; // maks. ukośne podejście dłoni pod klatkę
 const ARM_WALK_SPEED_KMH: f32 = 4.2;
 const ARM_RUN_BLEND_START_KMH: f32 = 7.0;
 const ARM_RUN_BLEND_END_KMH: f32 = 10.0;
@@ -121,11 +122,24 @@ fn arm_pose(shoulder: Vec3, gait: f32, side: f32, speed: f32) -> ArmPose {
         0.0,
     );
     let planar = forearm_xy.truncate().length().max(1.0e-6);
+
+    // Diagonal pump (referencja: bieg na zdjęciu / Runner's World): gdy
+    // ramię jedzie w przód, przedramię ukośnie podchodzi pod klatkę ku
+    // mostkowi; przy wycofaniu dłoń wraca przy own linii bioder. Składowa
+    // "-z" rośnie z fase w przód, długość przedramienia zostaje 1:1.
+    let forward_amount = ((upper_angle / swing.max(1.0e-6)) + 1.0) * 0.5;
+    let forward_amount = forward_amount.clamp(0.0, 1.0);
+    // Gate przez walk_amount: przy bezruchu składowa znika ciągle (brak
+    // szarpnięcia na granicy startu), pełny ukośny pump dopiero w biegu.
+    let inward = ARM_FOREARM_INWARD * forward_amount * walk_amount;
+    let hand_planar = (ARM_FOREARM_BONE_LENGTH * ARM_FOREARM_BONE_LENGTH - inward * inward)
+        .max(0.0)
+        .sqrt();
     let hand = elbow
         + Vec3::new(
-            forearm_xy.x / planar * ARM_FOREARM_BONE_LENGTH,
-            forearm_xy.y / planar * ARM_FOREARM_BONE_LENGTH,
-            0.0,
+            forearm_xy.x / planar * hand_planar,
+            forearm_xy.y / planar * hand_planar,
+            -side * inward,
         );
     ArmPose { upper, elbow, hand }
 }
@@ -199,21 +213,21 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
         // szersza niż talia. Elipsoidy zamiast kul — człowiek nie jest beczką.
         builder.ellipsoid(
             root + Vec3::new(0.01, 0.055, 0.0),
-            Vec3::new(0.095, 0.13, 0.142),
+            Vec3::new(0.095, 0.13, 0.155),
             9,
             16,
             shorts,
         );
         builder.ellipsoid(
             root + Vec3::new(0.035, 0.22, 0.0),
-            Vec3::new(0.088, 0.115, 0.118),
+            Vec3::new(0.088, 0.11, 0.135),
             9,
             16,
             jacket,
         );
         builder.ellipsoid(
             root + Vec3::new(0.075, 0.40, 0.0),
-            Vec3::new(0.112, 0.155, 0.16),
+            Vec3::new(0.10, 0.155, 0.15),
             10,
             18,
             jacket,
@@ -221,13 +235,13 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
         // odblaskowy pas przecina oba boki korpusu (+/- z)
         builder.cube(
             root + Vec3::new(0.075, 0.40, 0.0),
-            Vec3::new(0.16, 0.06, 0.36),
+            Vec3::new(0.16, 0.06, 0.34),
             reflect,
         );
         for side in [-1.0_f32, 1.0] {
             builder.sphere(
                 shoulder + Vec3::new(-0.005, -0.025, side * 0.115),
-                0.085,
+                0.08,
                 8,
                 14,
                 jacket,
@@ -292,7 +306,7 @@ mod tests {
 
     // Pół szerokości klatki elipsoidy — limit, żeby pompa rąk nie wchodziła
     // w bryłę klatki.
-    const TORSO_HALF_WIDTH: f32 = 0.16;
+    const TORSO_HALF_WIDTH: f32 = 0.15;
 
     #[test]
     fn shoe_bottom_uses_the_physics_foot_center() {
@@ -354,8 +368,10 @@ mod tests {
                     assert_eq!((arm.elbow.z - root.z).signum(), side);
                     assert_eq!((arm.hand.z - root.z).signum(), side);
                     assert!((arm.elbow.z - (root.z + side * ARM_ELBOW_LATERAL)).abs() < 1.0e-6);
-                    // łokciowa płaszczyzna = finalna dłoń (brak dryfu z-z):
-                    assert!((arm.hand.z - (root.z + side * ARM_ELBOW_LATERAL)).abs() < 1.0e-6);
+                    // Dłoń ma własną stronę (nigdy za środek ciała) i przy
+                    // wycofaniu wisi przy linii bioder tej strony:
+                    assert_eq!((arm.hand.z - root.z).signum(), side);
+                    assert!((arm.hand.z - root.z).abs() > 0.05);
                     assert!((arm.upper.distance(arm.elbow) - ARM_UPPER_BONE_LENGTH).abs() < 2.0e-5);
                     assert!(
                         (arm.elbow.distance(arm.hand) - ARM_FOREARM_BONE_LENGTH).abs() < 2.0e-5
@@ -388,9 +404,12 @@ mod tests {
                         arm.elbow.z.abs() > TORSO_HALF_WIDTH + 0.01,
                         "forearm sank into the chest: {arm:?}"
                     );
+                    // dłoń ukośna podchodzi pod klatkę (cel), ale nie może
+                    // wpaść w rdzeń klatki — dystans do osi tułowia:
+                    let hand_gap = distance_to_segment(arm.hand, torso_a, torso_b);
                     assert!(
-                        arm.hand.z.abs() > TORSO_HALF_WIDTH + 0.01,
-                        "hand sank into the chest: {arm:?}"
+                        hand_gap > 0.10,
+                        "hand buried in the chest core: {arm:?} gap={hand_gap}"
                     );
                     // Dłoń podniesiona ponad linię bioder zawsze zostaje przed
                     // mostkiem (klasyczny pump: żadne "ręce za plecami").
