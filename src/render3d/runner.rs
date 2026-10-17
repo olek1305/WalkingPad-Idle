@@ -17,9 +17,9 @@ use super::geometry::Bld;
 use super::material::{MaterialSpec, SurfaceKind, surface_preset};
 
 // ---- Ramiona: proporcje anatomiczne -------------------------------------
-const ARM_SHOULDER_LATERAL: f32 = 0.20; // środek głowy kości ramiennej
-const ARM_ELBOW_LATERAL: f32 = 0.235; // łokieć lekko na zewnątrz linii barków
-const ARM_FOREARM_RADIUS: f32 = 0.09 * 0.5;
+const ARM_SHOULDER_LATERAL: f32 = 0.165; // środek głowy kości ramiennej
+const ARM_ELBOW_LATERAL: f32 = 0.19; // łokieć lekko na zewnątrz linii barków
+const ARM_FOREARM_RADIUS: f32 = 0.084 * 0.5;
 const ARM_HAND_RADIUS: f32 = 0.052; // zaciśnięta pięść, nie piłka golfowa
 const ARM_UPPER_BONE_LENGTH: f32 = 0.33; // bark→łokieć
 const ARM_FOREARM_BONE_LENGTH: f32 = 0.27; // łokieć→kciuk bazowy
@@ -171,10 +171,10 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
             let hip = leg_hip(root, i);
             let foot = Vec3::from_array(pose.feet[i]);
             let knee = Vec3::from_array(pose.knees[i]);
-            // szorty kończą się w połowie uda
-            builder.capsule_smooth(hip, hip + (knee - hip) * 0.5, 0.128, shorts);
-            builder.capsule_smooth(hip, knee, 0.105, trousers);
-            builder.capsule_smooth(knee, foot, 0.082, trousers);
+            // szorty łączą się z miednicą, kończą wyżej niż kolano
+            builder.capsule_smooth(hip, hip + (knee - hip) * 0.4, 0.106, shorts);
+            builder.capsule_smooth(hip, knee, 0.090, trousers);
+            builder.capsule_smooth(knee, foot, 0.068, trousers);
             builder.with_material(shoe, |builder| {
                 let shoe_center = foot + Vec3::new(0.08, 0.0, -0.015);
                 builder.cube(shoe_center, Vec3::from_array(SHOE_SIZE), shoe_color);
@@ -199,21 +199,21 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
         // szersza niż talia. Elipsoidy zamiast kul — człowiek nie jest beczką.
         builder.ellipsoid(
             root + Vec3::new(0.01, 0.055, 0.0),
-            Vec3::new(0.10, 0.135, 0.155),
+            Vec3::new(0.095, 0.13, 0.142),
             9,
             16,
             shorts,
         );
         builder.ellipsoid(
             root + Vec3::new(0.035, 0.22, 0.0),
-            Vec3::new(0.092, 0.115, 0.132),
+            Vec3::new(0.088, 0.115, 0.118),
             9,
             16,
             jacket,
         );
         builder.ellipsoid(
             root + Vec3::new(0.075, 0.40, 0.0),
-            Vec3::new(0.112, 0.155, 0.175),
+            Vec3::new(0.112, 0.155, 0.16),
             10,
             18,
             jacket,
@@ -221,13 +221,13 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
         // odblaskowy pas przecina oba boki korpusu (+/- z)
         builder.cube(
             root + Vec3::new(0.075, 0.40, 0.0),
-            Vec3::new(0.16, 0.06, 0.41),
+            Vec3::new(0.16, 0.06, 0.36),
             reflect,
         );
         for side in [-1.0_f32, 1.0] {
             builder.sphere(
-                shoulder + Vec3::new(-0.005, -0.025, side * 0.14),
-                0.105,
+                shoulder + Vec3::new(-0.005, -0.025, side * 0.115),
+                0.085,
                 8,
                 14,
                 jacket,
@@ -241,7 +241,7 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
         let side = if i == 0 { 1.0 } else { -1.0 };
         let arm = arm_pose(shoulder, gait, side, speed);
         builder.with_material(cloth, |builder| {
-            builder.capsule_smooth(arm.upper, arm.elbow, 0.062, jacket);
+            builder.capsule_smooth(arm.upper, arm.elbow, 0.055, jacket);
         });
         builder.with_material(skin, |builder| {
             builder.capsule_smooth(arm.elbow, arm.hand, ARM_FOREARM_RADIUS, skin_color);
@@ -252,14 +252,15 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
     builder.with_material(skin, |builder| {
         // Szyja: ~10 cm średnicy i WIDOCZNA między zwężeniem klatki a głową
         // (wcześniej głowa przylegała bezpośrednio do bryły piersiowej).
-        let neck_base = root + Vec3::new(0.05, 0.52, 0.0);
-        let neck_top = root + Vec3::new(0.06, 0.615, 0.0);
-        builder.capsule_smooth(neck_base, neck_top, 0.048, skin_color);
-        // Głowa: 1/8 wysokości ciała. Elipsoida: głębsza (x) niż szersza (z),
-        // jak prawdziwa czaszka, nie piłka.
+        let neck_base = root + Vec3::new(0.05, 0.53, 0.0);
+        let neck_top = root + Vec3::new(0.06, 0.63, 0.0);
+        builder.capsule_smooth(neck_base, neck_top, 0.052, skin_color);
+        // Głowa: 1/7.5 wysokości ciała (średni człowiek: 7-7.5 główek).
+        // Elipsoida: głębsza (x) niż szersza (z), jak prawdziwa czaszka,
+        // nie piłka.
         builder.ellipsoid(
-            root + Vec3::new(0.07, 0.71, 0.0),
-            Vec3::new(0.100, 0.118, 0.078),
+            root + Vec3::new(0.08, 0.72, 0.0),
+            Vec3::new(0.105, 0.126, 0.084),
             10,
             16,
             skin_color,
@@ -267,18 +268,18 @@ fn runner_body(builder: &mut Bld, pose: RunnerVisual) {
     });
 
     builder.with_material(cloth, |builder| {
-        let head = root + Vec3::new(0.07, 0.71, 0.0);
+        let head = root + Vec3::new(0.08, 0.72, 0.0);
         // Czapka = kopuła na samej czaszce + daszek przed buzią, a nie balon
         builder.sphere(
-            head + Vec3::new(0.0, 0.035, 0.0),
-            0.10,
+            head + Vec3::new(0.0, 0.04, 0.0),
+            0.108,
             8,
             14,
             Color::new(0.08, 0.10, 0.18, 1.0),
         );
         builder.cube(
-            head + Vec3::new(0.09, 0.085, 0.0),
-            Vec3::new(0.19, 0.03, 0.25),
+            head + Vec3::new(0.075, 0.085, 0.0),
+            Vec3::new(0.15, 0.024, 0.185),
             Color::new(0.06, 0.08, 0.15, 1.0),
         );
     });
@@ -291,7 +292,7 @@ mod tests {
 
     // Pół szerokości klatki elipsoidy — limit, żeby pompa rąk nie wchodziła
     // w bryłę klatki.
-    const TORSO_HALF_WIDTH: f32 = 0.175;
+    const TORSO_HALF_WIDTH: f32 = 0.16;
 
     #[test]
     fn shoe_bottom_uses_the_physics_foot_center() {
