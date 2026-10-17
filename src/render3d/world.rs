@@ -413,16 +413,46 @@ fn build_ground_tile(tile_index: i64) -> CachedGroundTile {
             while z < ZMAX {
                 let z0 = z;
                 let z1 = (z + ZSTEP).min(ZMAX);
-                builder.quad_with_vertex_materials(
-                    [
-                        Vec3::new(x0, 0.0, z0),
-                        Vec3::new(x0, 0.0, z1),
-                        Vec3::new(x1, 0.0, z1),
-                        Vec3::new(x1, 0.0, z0),
-                    ],
-                    [left_color, left_color, right_color, right_color],
-                    [left_material, left_material, right_material, right_material],
-                );
+                // Wycięty "rów" ±(HW+2.4) zastępują trzy powierzchnie płaskie:
+                // jezdnia (asfalt, +2 cm), okalające linie (+4 cm) i pobocze
+                // (teraz płaskie, y=0, poniżej). Pobocze musi być częścią tej
+                // samej grupy materiałów co biome: gdy rysowano je jako
+                // 1-cm nakładkę materiałem Metal, cienie od drzew i słupów
+                // rozpływały się na jego granicy (pomiar: rgb stałe 27,58,40
+                // niezależnie od śladu cienia). Ta sama płaszczyzna, ten sam
+                // materiał i tę samą ścieżkę renderingu co biome — cienie
+                // działają na całej posadzce.
+                for (lo, hi) in [(z0, z1.min(-(HW + 2.4))), (z0.max(HW + 2.4), z1)] {
+                    if hi > lo {
+                        builder.quad_with_vertex_materials(
+                            [
+                                Vec3::new(x0, 0.0, lo),
+                                Vec3::new(x0, 0.0, hi),
+                                Vec3::new(x1, 0.0, hi),
+                                Vec3::new(x1, 0.0, lo),
+                            ],
+                            [left_color, left_color, right_color, right_color],
+                            [left_material, left_material, right_material, right_material],
+                        );
+                    }
+                }
+                for (lo, hi) in [
+                    (z0.max(-(HW + 2.4)), z1.min(-(HW + 0.18))),
+                    (z0.max(HW + 0.18), z1.min(HW + 2.4)),
+                ] {
+                    if hi > lo {
+                        builder.quad_with_vertex_materials(
+                            [
+                                Vec3::new(x0, 0.0, lo),
+                                Vec3::new(x0, 0.0, hi),
+                                Vec3::new(x1, 0.0, hi),
+                                Vec3::new(x1, 0.0, lo),
+                            ],
+                            [verge; 4],
+                            [left_material, left_material, right_material, right_material],
+                        );
+                    }
+                }
                 z += ZSTEP;
             }
         });
@@ -447,14 +477,6 @@ fn build_ground_tile(tile_index: i64) -> CachedGroundTile {
                     Vec3::new(x1, 0.04, z1),
                     Vec3::new(x1, 0.04, z0),
                     ROAD_LINE,
-                );
-                let (z2, z3) = (side * (HW + 0.18), side * (HW + 2.4));
-                builder.quad(
-                    Vec3::new(x0, 0.01, z2),
-                    Vec3::new(x0, 0.01, z3),
-                    Vec3::new(x1, 0.01, z3),
-                    Vec3::new(x1, 0.01, z2),
-                    verge,
                 );
             }
         });
@@ -1620,7 +1642,19 @@ mod tests {
     fn assert_ground_tile_seam(tile_index: i64) {
         let left = build_ground_tile(tile_index);
         let right = build_ground_tile(tile_index + 1);
-        for z in [-560.0, -540.0, 0.0, 140.0, 150.0] {
+        // Row ±(HW+2.4) pod pasem drogi nie ma już wierzchołków bioma, więc
+        // szew sprawdzamy poza nim oraz na krawędziach rowu (tam biome i
+        // pobocze współdzielą pozycję y=0).
+        for z in [
+            -560.0,
+            -540.0,
+            -20.0,
+            -(HW + 2.4),
+            HW + 2.4,
+            20.0,
+            140.0,
+            150.0,
+        ] {
             let left_vertex = ground_vertex(&left, 30.0, z);
             let right_vertex = ground_vertex(&right, 0.0, z);
             assert_eq!(left_vertex.color, right_vertex.color, "z={z}");
